@@ -1,0 +1,8 @@
+streamlit==1.36.0
+pandas==2.2.2
+numpy==1.26.4
+joblib==1.4.2
+xgboost==2.1.0
+scikit-learn==1.5.1
+xlsxwriter==3.2.0
+fpdf==1.7.2
