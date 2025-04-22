@@ -352,22 +352,22 @@ else:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Tab 6: Regional Claim Distributions
+    # Tab 6: Race Claim Distributions
     with tab6:
-        st.header("Regional Claim Distributions")
+        st.header("Race Claim Distributions")
         st.markdown("<div class='section'>", unsafe_allow_html=True)
 
         try:
             unique_races = st.session_state.filtered_data["RACE"].unique()
             st.write(f"**Unique Races in Filtered Data:** {unique_races}")
 
-            regional_distribution = st.session_state.filtered_data.groupby("RACE")["TOTALCOST"].sum().reset_index()
+            race_distribution = st.session_state.filtered_data.groupby("RACE")["TOTALCOST"].sum().reset_index()
             st.write("**Total Claim Costs by Race (Proxy for Region):**")
-            if regional_distribution.empty:
+            if race_distribution.empty:
                 st.write("No data available for the selected year range. Please adjust the filters in the 'Data Filters' tab.")
             else:
-                st.write(regional_distribution)
-                st.bar_chart(regional_distribution.set_index("RACE")["TOTALCOST"])
+                st.write(race_distribution)
+                st.bar_chart(race_distribution.set_index("RACE")["TOTALCOST"])
             
             avg_cost_by_race = st.session_state.filtered_data.groupby("RACE")["TOTALCOST"].mean().reset_index()
             st.write("**Average Claim Cost by Race (Proxy for Region):**")
