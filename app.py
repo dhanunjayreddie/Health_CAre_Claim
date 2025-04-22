@@ -2,9 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-from datetime import datetime
 import io
-from sklearn.linear_model import LinearRegression
+from statsmodels.tsa.arima.model import ARIMA
+import warnings
+warnings.filterwarnings("ignore")  # Suppress ARIMA convergence warnings for cleaner output
 try:
     import xlsxwriter
     XLSXWRITER_AVAILABLE = True
@@ -17,7 +18,6 @@ try:
 except ImportError:
     FPDF_AVAILABLE = False
     st.warning("fpdf is not installed. PDF export will be disabled.")
-import base64
 
 # Minimal CSS for styling
 st.markdown("""
@@ -25,6 +25,7 @@ st.markdown("""
 body {
     font-family: Arial, sans-serif;
     color: #333;
+    background-color: #f0f4f8;
 }
 h1, h2, h3 {
     color: #2c3e50;
@@ -35,6 +36,16 @@ h1, h2, h3 {
     border: 1px solid #ddd;
     border-radius: 5px;
     background-color: #ffffff;
+}
+.stButton>button {
+    background-color: #2c3e50;
+    color: white;
+    border-radius: 5px;
+    border: none;
+    padding: 0.5em 1em;
+}
+.stButton>button:hover {
+    background-color: #34495e;
 }
 .st-expander {
     background-color: #ffffff;
@@ -207,7 +218,7 @@ else:
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["Data Filters", "Key Metrics", "Claim Forecast", "Data Visualizations", "Resource Allocation", "Race Claim Distributions", "Prediction Cost", "Data Export"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["Data Filters", "Key Metrics", "Claim Forecast", "Data Visualizations", "Resource Allocation", "Regional Claim Distributions", "Prediction Cost", "Data Export"])
 
     # Tab 1: Data Filters
     with tab1:
@@ -266,42 +277,70 @@ else:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Tab 3: Claim Forecast
+    # Tab 3: Claim Forecast (Updated with ARIMAX)
     with tab3:
         st.header("Claim Forecast")
         st.markdown("<div class='section'>", unsafe_allow_html=True)
 
         try:
+            # Aggregate data by year for the time series
             yearly_costs = data.groupby("START_YEAR")["TOTALCOST"].sum().reset_index()
-            X = yearly_costs["START_YEAR"].values.reshape(-1, 1)
-            y = yearly_costs["TOTALCOST"].values
-            forecast_model = LinearRegression()
-            forecast_model.fit(X, y)
-            current_year = data["START_YEAR"].max()
-            future_years = np.array([current_year + i for i in range(1, 6)]).reshape(-1, 1)
-            forecasted_costs = forecast_model.predict(future_years)
-            
-            st.write("**Claim Cost Forecast for the Next 5 Years:**")
+            yearly_costs = yearly_costs.sort_values("START_YEAR")
+
+            # Calculate exogenous variables
+            yearly_avg_age = data.groupby("START_YEAR")["AGE"].mean().reset_index()
+            yearly_inpatient_prop = data.groupby("START_YEAR")["ENCOUNTERCLASS"].apply(
+                lambda x: (x == "inpatient").mean()
+            ).reset_index(name="INPATIENT_PROPORTION")
+            yearly_avg_income = data.groupby("START_YEAR")["INCOME"].mean().reset_index()
+
+            # Merge the exogenous variables into the time series dataframe
+            ts_data = yearly_costs.merge(yearly_avg_age, on="START_YEAR")
+            ts_data = ts_data.merge(yearly_inpatient_prop, on="START_YEAR")
+            ts_data = ts_data.merge(yearly_avg_income, on="START_YEAR")
+
+            # Prepare the exogenous variables for ARIMAX
+            exog = ts_data[["AGE", "INPATIENT_PROPORTION", "INCOME"]]
+
+            # Fit ARIMAX model
+            arimax_model = ARIMA(
+                ts_data["TOTALCOST"],
+                exog=exog,
+                order=(1, 1, 1)
+            )
+            arimax_fit = arimax_model.fit()
+
+            # Forecast the next 5 years
+            # For simplicity, assume the last known values of exogenous variables persist
+            future_exog = exog.tail(1).reindex(index=range(5)).fillna(method="ffill")
+            forecast = arimax_fit.forecast(steps=5, exog=future_exog)
+            forecasted_costs = forecast.values
+            forecast_years = range(int(ts_data["START_YEAR"].max()) + 1, int(ts_data["START_YEAR"].max()) + 6)
+
+            # Create forecast DataFrame
             forecast_df = pd.DataFrame({
-                "Year": future_years.flatten(),
+                "Year": forecast_years,
                 "Forecasted Cost ($)": forecasted_costs
             })
+
+            st.write("**Claim Cost Forecast for the Next 5 Years (Using ARIMAX):**")
             st.write(forecast_df)
-            
+
+            # Prepare data for plotting
             historical_df = pd.DataFrame({
                 "Year": yearly_costs["START_YEAR"],
                 "Cost": yearly_costs["TOTALCOST"],
                 "Type": "Historical"
             })
             forecast_df_plot = pd.DataFrame({
-                "Year": future_years.flatten(),
+                "Year": forecast_years,
                 "Cost": forecasted_costs,
                 "Type": "Forecasted"
             })
             plot_df = pd.concat([historical_df, forecast_df_plot])
             st.line_chart(plot_df.set_index("Year")["Cost"])
         except Exception as e:
-            st.error(f"Error generating claim forecast: {e}")
+            st.error(f"Error generating claim forecast with ARIMAX: {e}")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -352,22 +391,22 @@ else:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Tab 6: Race Claim Distributions
+    # Tab 6: Regional Claim Distributions
     with tab6:
-        st.header("Race Claim Distributions")
+        st.header("Regional Claim Distributions")
         st.markdown("<div class='section'>", unsafe_allow_html=True)
 
         try:
             unique_races = st.session_state.filtered_data["RACE"].unique()
             st.write(f"**Unique Races in Filtered Data:** {unique_races}")
 
-            race_distribution = st.session_state.filtered_data.groupby("RACE")["TOTALCOST"].sum().reset_index()
+            regional_distribution = st.session_state.filtered_data.groupby("RACE")["TOTALCOST"].sum().reset_index()
             st.write("**Total Claim Costs by Race (Proxy for Region):**")
-            if race_distribution.empty:
+            if regional_distribution.empty:
                 st.write("No data available for the selected year range. Please adjust the filters in the 'Data Filters' tab.")
             else:
-                st.write(race_distribution)
-                st.bar_chart(race_distribution.set_index("RACE")["TOTALCOST"])
+                st.write(regional_distribution)
+                st.bar_chart(regional_distribution.set_index("RACE")["TOTALCOST"])
             
             avg_cost_by_race = st.session_state.filtered_data.groupby("RACE")["TOTALCOST"].mean().reset_index()
             st.write("**Average Claim Cost by Race (Proxy for Region):**")
